@@ -1,0 +1,70 @@
+Architecture
+Retriever Agent: Fetches top-k semantic chunks from ChromaDB.
+
+Grader Agent: Acts as a bouncer; decides if the context actually answers the user's query.
+
+Synthesizer Agent: Generates the final answer only if the context is relevant.
+
+Evaluator Agent: Audits the final response for the observability dashboard.
+
+---
+
+### 2. Questions & Answers
+
+Judges love to grill participants on *why* they chose their architecture. Here is your cheat sheet to nail the Q&A:
+
+**1. What makes this different from standard RAG?**
+Standard RAG blindly retrieves text and passes it to an LLM, hoping for the best. Our project uses an **Agentic Workflow** where multiple AI agents evaluate, grade, and route the data before generating an answer, drastically reducing hallucinations.
+
+**2. How exactly do you prevent the LLM from hallucinating?**
+We implemented a **Context Grader Agent**. Before the LLM writes the final answer, this grader looks at the user's question and the retrieved text. If the text doesn't contain the answer, it routes the flow to a "rejection" node, refusing to answer instead of making things up.
+
+**3. Why did you use LangGraph instead of standard LangChain chains?**
+LangGraph allows us to treat agents as nodes in a state machine. It gives us cyclical workflows and conditional routing (like if/else logic for AI), which is required to build a true multi-agent system.
+
+**4. What is the purpose of the Observability Dashboard?**
+In production, you need to know if your AI is performing well. We built an **LLM-as-a-Judge Evaluator Agent** that audits every generated response and scores it on Faithfulness, Relevance, Accuracy, and Safety in real-time.
+
+**5. How are you chunking the PDF data?**
+We use a RecursiveCharacterTextSplitter. We split the text into chunks of 1000 characters with a 200-character overlap to ensure we don't accidentally cut a sentence or semantic thought in half.
+
+**6. What database are you using and why?**
+We are using **ChromaDB**. It is an open-source vector database that runs locally, requires no heavy cloud setup during a hackathon, and integrates perfectly with LangChain for semantic search.
+
+**7. What embedding model are you using?**
+We use text-embedding-ada-002 (or your specific model) to convert the document text into high-dimensional vector representations, allowing the retriever to find context based on meaning rather than exact keyword matches.
+
+**8. What happens if I ask the bot a random question like "What is the capital of France?"**
+The Retriever will pull the closest matching text from the PDF. The Context Grader will look at that text, realize it doesn't mention France, and block the Synthesizer. The bot will reply that the question is out of scope.
+
+**9. Can this system scale to handle hundreds of documents?**
+Yes. ChromaDB can ingest multiple PDFs into the same vector space. The Retriever Agent simply pulls the top k most relevant chunks across *all* documents. 
+
+**10. What would you add next if you had more time? (Future Scope)**
+We would add a **Web-Search Fallback Agent** (if the PDF doesn't have the answer, the agent searches the internet) and implement **Vision Agents** to read complex charts and graphs inside the PDFs.
+
+---
+
+### 3. Code Explanation (How it Works)
+
+Here is a simple breakdown of the two files you are running.
+
+#### rag_core.py (The Brains)
+This file handles the database and the Multi-Agent pipeline. 
+
+*   **AgentState:** This is a shared dictionary (state) that gets passed from agent to agent. It holds the question, the retrieved documents, the final generation, and the scores.
+*   **process_pdf_to_chroma:** Reads your PDF, chops it into overlapping blocks (chunks), converts them into numbers (embeddings), and saves them in chroma_index.
+*   **The 4 Agents:**
+    *   **retrieve_agent:** Takes the user query and searches ChromaDB for the 4 most relevant chunks.
+    *   **context_grader_agent:** Prompts the LLM to output "Yes" or "No" based on whether the chunks are actually helpful.
+    *   **synthesizer_agent:** Prompts the LLM to write the final, helpful answer.
+    *   **evaluator_agent:** Audits the process and generates the metrics for the dashboard.
+*   **The Graph Workflow:** The StateGraph connects everything. It uses add_conditional_edges to route the data. If the grader says "Yes," it goes to the Synthesizer. If "No," it goes to reject_out_of_context.
+
+#### app.py (The Face)
+This file handles what the user sees and interacts with.
+
+*   **Sidebar Config:** Collects your API key and provides the file upload widget.
+*   **Processing:** When you click "Process Document", it saves the PDF temporarily and triggers the database building function from rag_core.
+*   **Metrics Dashboard:** Displays the scores calculated by your Evaluator Agent.
+*   **Chat Interface:** Uses Streamlit's st.chat_message to render a WhatsApp-style chat. When a user hits enter, it shows a spinner, calls process_query_with_agents from the core logic, and updates the screen with the AI's response and new dashboard metrics.
